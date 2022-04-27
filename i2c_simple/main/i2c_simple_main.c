@@ -39,6 +39,7 @@ static const char *TAG = "Prototype";
 #define MPU9250_PWR_MGMT_1_REG_ADDR 0x6B        /*!< Register addresses of the power managment register */
 #define MPU9250_RESET_BIT           7
 
+#define MPU9250_RA_USER_CTRL        0x6A
 #define MPU9250_ACCEL_XOUT_H        0x3B        //Accélèromètre
 #define MPU9250_GYRO_XOUT_H         0x43        //Gyroscope
 #define AK8963_XOUT_L               0x03        //Magnétomètre Low
@@ -220,6 +221,75 @@ float invSqrt(float x)
     return y;
 }
 
+void MadgwickAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az)
+{
+  float recipNorm;
+  float s0, s1, s2, s3;
+  float qDot1, qDot2, qDot3, qDot4;
+  float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2, _8q1, _8q2, q0q0, q1q1, q2q2, q3q3;
+
+  // Rate of change of quaternion from gyroscope
+  qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
+  qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
+  qDot3 = 0.5f * (q0 * gy - q1 * gz + q3 * gx);
+  qDot4 = 0.5f * (q0 * gz + q1 * gy - q2 * gx);
+
+  // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
+  if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
+  {
+
+    // Normalise accelerometer measurement
+    recipNorm = invSqrt(ax * ax + ay * ay + az * az);
+    ax *= recipNorm;
+    ay *= recipNorm;
+    az *= recipNorm;
+
+    // Auxiliary variables to avoid repeated arithmetic
+    _2q0 = 2.0f * q0;
+    _2q1 = 2.0f * q1;
+    _2q2 = 2.0f * q2;
+    _2q3 = 2.0f * q3;
+    _4q0 = 4.0f * q0;
+    _4q1 = 4.0f * q1;
+    _4q2 = 4.0f * q2;
+    _8q1 = 8.0f * q1;
+    _8q2 = 8.0f * q2;
+    q0q0 = q0 * q0;
+    q1q1 = q1 * q1;
+    q2q2 = q2 * q2;
+    q3q3 = q3 * q3;
+
+    // Gradient decent algorithm corrective step
+    s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
+    s1 = _4q1 * q3q3 - _2q3 * ax + 4.0f * q0q0 * q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
+    s2 = 4.0f * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
+    s3 = 4.0f * q1q1 * q3 - _2q1 * ax + 4.0f * q2q2 * q3 - _2q2 * ay;
+    recipNorm = invSqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
+    s0 *= recipNorm;
+    s1 *= recipNorm;
+    s2 *= recipNorm;
+    s3 *= recipNorm;
+
+    // Apply feedback step
+    qDot1 -= beta * s0;
+    qDot2 -= beta * s1;
+    qDot3 -= beta * s2;
+    qDot4 -= beta * s3;
+  }
+
+  // Integrate rate of change of quaternion to yield quaternion
+  q0 += qDot1 * (1.0f / sampleFreq);
+  q1 += qDot2 * (1.0f / sampleFreq);
+  q2 += qDot3 * (1.0f / sampleFreq);
+  q3 += qDot4 * (1.0f / sampleFreq);
+
+  // Normalise quaternion
+  recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+  q0 *= recipNorm;
+  q1 *= recipNorm;
+  q2 *= recipNorm;
+  q3 *= recipNorm;
+}
 
 /**
  * @brief AHRS algorithm update
@@ -242,6 +312,14 @@ void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float 
     float qDot1, qDot2, qDot3, qDot4;
     float hx, hy;
     float _2q0mx, _2q0my, _2q0mz, _2q1mx, _2bx, _2bz, _4bx, _4bz, _2q0, _2q1, _2q2, _2q3, _2q0q2, _2q2q3, q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3, q3q3;
+
+      // Use IMU algorithm if magnetometer measurement invalid (avoids NaN in magnetometer normalisation)
+    if ((mx == 0.0f) && (my == 0.0f) && (mz == 0.0f))
+    {
+        MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
+        return;
+    }
+
     // Rate of change of quaternion from gyroscope
     qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
     qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
@@ -379,27 +457,26 @@ void MadgwickGetEulerAngles(float *heading, float *pitch, float *roll)
  */
 void MadgwickGetEulerAnglesDegrees(float *heading, float *pitch, float *roll)
 {
-  MadgwickGetEulerAngles(heading, pitch, roll);
+    MadgwickGetEulerAngles(heading, pitch, roll);
 
-  *heading *= RAD_2_DEG;
-  *pitch *= RAD_2_DEG;
-  *roll *= RAD_2_DEG;
+    *heading *= RAD_2_DEG;
+    *pitch *= RAD_2_DEG;
+    *roll *= RAD_2_DEG;
 }
-
 
 void app_main(void)
 {
     ESP_ERROR_CHECK(i2c_master_init());
     ESP_LOGI(TAG, "I2C initialized successfully");
 
-    mpu9250_register_write_byte(MPU9250_INT_PIN_CFG, 1 << 1); // Ecriture dans le registre pour activer le mode pass-through
+    uint8_t write_buf_test[8] = {MPU9250_RA_USER_CTRL, 0 << 1}; // 0110 : continuous measurement mode 2
+    i2c_master_write_to_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, write_buf_test, sizeof(write_buf_test), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
 
-    // 0000 : power-down mode
-    // 0001 : single measurement mode
-    // 0010 : continuous measurement mode 1
-    // 0110 : continuous measurement mode 2
-    // 0100 : external trigger measurement mode
-    // 1000 : self-test mode, 1111 : fuse ROM access mode
+    data_write[0] = MPU9250_RA_USER_CTRL;
+    i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("MPU9250_RA_USER_CTRL : 0x%04X\n", data_read[0]);
+
+    mpu9250_register_write_byte(MPU9250_INT_PIN_CFG, 1 << 1); // Ecriture dans le registre pour activer le mode pass-through
 
     uint8_t write_buf[8] = {AK8963_CNTL1, 1 << 1 | 1 << 2}; // 0110 : continuous measurement mode 2
     i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -409,7 +486,10 @@ void app_main(void)
     {
         accelerometer();
         gyroscope();
-        magnetometer();
+        // magnetometer();
+        vm.x = 0.0;
+        vm.y = 0.0;
+        vm.z = 0.0;
         
         MadgwickAHRSupdate(DEG2RAD(vg.x), DEG2RAD(vg.y), DEG2RAD(vg.z), va.x, va.y, va.z, vm.x, vm.y, vm.z);
         MadgwickGetEulerAnglesDegrees(&heading, &pitch, &roll);
