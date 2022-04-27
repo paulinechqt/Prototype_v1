@@ -1,4 +1,4 @@
-/* * Data converted from C:/Users/pauli/esp/esp-idf/i2c_simple_base/i2c_simple/build/esp-idf/mbedtls/x509_crt_bundle
+/* * Data converted from C:/Users/pauli/esp/esp-idf/Prototype/Prototype_v1/i2c_simple/build/esp-idf/mbedtls/x509_crt_bundle
  */
 .data
 .section .rodata.embedded

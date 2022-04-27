@@ -2,7 +2,7 @@
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "C:/Program Files (x86)/i2c-simple")
+  set(CMAKE_INSTALL_PREFIX "C:/Program Files (x86)/prototype")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 
@@ -39,9 +39,9 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for each subdirectory.
-  include("C:/Users/pauli/esp/esp-idf/i2c_simple_base/i2c_simple/build/esp-idf/mbedtls/mbedtls/include/cmake_install.cmake")
-  include("C:/Users/pauli/esp/esp-idf/i2c_simple_base/i2c_simple/build/esp-idf/mbedtls/mbedtls/3rdparty/cmake_install.cmake")
-  include("C:/Users/pauli/esp/esp-idf/i2c_simple_base/i2c_simple/build/esp-idf/mbedtls/mbedtls/library/cmake_install.cmake")
+  include("C:/Users/pauli/esp/esp-idf/Prototype/Prototype_v1/i2c_simple/build/esp-idf/mbedtls/mbedtls/include/cmake_install.cmake")
+  include("C:/Users/pauli/esp/esp-idf/Prototype/Prototype_v1/i2c_simple/build/esp-idf/mbedtls/mbedtls/3rdparty/cmake_install.cmake")
+  include("C:/Users/pauli/esp/esp-idf/Prototype/Prototype_v1/i2c_simple/build/esp-idf/mbedtls/mbedtls/library/cmake_install.cmake")
 
 endif()
 

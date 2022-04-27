@@ -299,7 +299,7 @@ rule C_STATIC_LIBRARY_LINKER____idf_main_
 # Rule for re-running cmake.
 
 rule RERUN_CMAKE
-  command = D:\esp\tools\cmake\3.20.3\bin\cmake.exe --regenerate-during-build -SC:\Users\pauli\esp\esp-idf\components\bootloader\subproject -BC:\Users\pauli\esp\esp-idf\i2c_simple_base\i2c_simple\build\bootloader
+  command = D:\esp\tools\cmake\3.20.3\bin\cmake.exe --regenerate-during-build -SC:\Users\pauli\esp\esp-idf\components\bootloader\subproject -BC:\Users\pauli\esp\esp-idf\Prototype\Prototype_v1\i2c_simple\build\bootloader
   description = Re-running CMake...
   generator = 1
 

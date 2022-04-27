@@ -1,8 +1,8 @@
 {
     "project_name":       "bootloader",
     "project_path":       "C:/Users/pauli/esp/esp-idf/components/bootloader/subproject",
-    "build_dir":          "C:/Users/pauli/esp/esp-idf/i2c_simple_base/i2c_simple/build/bootloader",
-    "config_file":        "C:/Users/pauli/esp/esp-idf/i2c_simple_base/i2c_simple/sdkconfig",
+    "build_dir":          "C:/Users/pauli/esp/esp-idf/Prototype/Prototype_v1/i2c_simple/build/bootloader",
+    "config_file":        "C:/Users/pauli/esp/esp-idf/Prototype/Prototype_v1/i2c_simple/sdkconfig",
     "config_defaults":    "",
     "app_elf":            "bootloader.elf",
     "app_bin":            "bootloader.bin",

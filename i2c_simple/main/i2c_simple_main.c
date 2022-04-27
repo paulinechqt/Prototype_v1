@@ -21,7 +21,7 @@
 #include "driver/i2c.h"
 #include <math.h>
 
-static const char *TAG = "i2c-simple-example";
+static const char *TAG = "Prototype";
 
 #define I2C_MASTER_SCL_IO           CONFIG_I2C_MASTER_SCL      /*!< GPIO number used for I2C master clock */
 #define I2C_MASTER_SDA_IO           CONFIG_I2C_MASTER_SDA      /*!< GPIO number used for I2C master data  */
@@ -55,9 +55,10 @@ static const char *TAG = "i2c-simple-example";
 
 #define MPU9250_INT_ENABLE          0x38
 #define M_PI                        3.14159265
-#define DEG2RAD(deg) (deg * M_PI / 180.0f)
+#define DEG2RAD(deg)                (deg * M_PI / 180.0f)
 
 float ax, ay, az, gx, gy, gz, mx, my, mz;
+float heading, pitch, roll;
 uint8_t data_write[20];
 uint8_t data_read[20];
 
@@ -114,7 +115,7 @@ static esp_err_t i2c_master_init(void)
  * @brief Acquisition de l'accélération
  * 
  */
-static void accelerometer(void)
+static vector_t accelerometer(void)
 {
     // data_write[0] = MPU9250_WHO_AM_I_REG_ADDR;
     // i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -133,13 +134,17 @@ static void accelerometer(void)
     float az = (float)accel_zout/16384;
 
     printf("ACCELEROMETRE \n %.2f g\n %.2f g\n %.2f g\n", ax, ay, az);
+    va.x = ax;
+    va.y = ay;
+    va.z = az;
+    return va;
 }
 
 /**
  * @brief Acquision de la vitesse angulaire
  * 
  */
-static void gyroscope(void)
+static vector_t gyroscope(void)
 {
     data_write[0] = MPU9250_GYRO_XOUT_H;
     i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 6, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -154,13 +159,18 @@ static void gyroscope(void)
     float gz = (float)gyro_zout/131;
 
     printf("GYROSCOPE \n %.2f °/s\n %.2f °/s\n %.2f °/s\n", gx, gy, gz);
+    
+    vg.x = gx;
+    vg.y = gy;
+    vg.z = gz;
+    return vg;
 }
 
 /**
  * @brief Acquisition de la direction du champ magnétique
  * 
  */
-static void magnetometer(void)
+static vector_t magnetometer(void)
 {
     data_write[0] = AK8963_WHO_AM_I;
     i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -182,6 +192,11 @@ static void magnetometer(void)
 
     float norme = sqrtf(pow(mx, 2) + pow(my, 2) + pow(mz, 2));
     printf("Norme du vecteur : %.2f \n", norme);
+
+    vm.x = mx;
+    vm.y = my;
+    vm.z = mz;
+    return vm;
 }
 
 volatile float sampleFreq = 50;                            // 2 * proportional gain (Kp)
@@ -221,12 +236,12 @@ float invSqrt(float x)
  */
 void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz)
 {
+    ESP_LOGI(TAG, "MadgwickAHRSupdate begin");
     float recipNorm;
     float s0, s1, s2, s3;
     float qDot1, qDot2, qDot3, qDot4;
     float hx, hy;
     float _2q0mx, _2q0my, _2q0mz, _2q1mx, _2bx, _2bz, _4bx, _4bz, _2q0, _2q1, _2q2, _2q3, _2q0q2, _2q2q3, q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3, q3q3;
-
     // Rate of change of quaternion from gyroscope
     qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
     qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
@@ -308,7 +323,69 @@ void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float 
     q1 *= recipNorm;
     q2 *= recipNorm;
     q3 *= recipNorm;
+    ESP_LOGI(TAG, "MadgwickAHRSupdate end");
 }
+
+float norm_angle_0_2pi(float a)
+{
+  a = fmod(a, M_PI * 2.0);
+  if (a < 0)
+  {
+    a += M_PI * 2.0;
+  }
+  return a;
+}
+
+/**
+ * Return an object with the Euler angles {heading; pitch, roll}, in radians.
+ *
+ * Where:
+ *   - heading is from magnetic north, going west (about z-axis).
+ *   - pitch is from vertical, going forward (about y-axis).
+ *   - roll is from vertical, going right (about x-axis).
+ *
+ * Thanks to:
+ *   https://github.com/PenguPilot/PenguPilot/blob/master/autopilot/service/util/math/quat.c#L103
+ * @return {object} {heading, pitch, roll} in radians
+ */
+void MadgwickGetEulerAngles(float *heading, float *pitch, float *roll)
+{
+  float ww = q0 * q0;
+  float xx = q1 * q1;
+  float yy = q2 * q2;
+  float zz = q3 * q3;
+  *heading = norm_angle_0_2pi(atan2f(2.0 * (q1 * q2 + q3 * q0), xx - yy - zz + ww));
+  *pitch = asinf(-2.0 * (q1 * q3 - q2 * q0));
+  *roll = atan2(2.0 * (q2 * q3 + q1 * q0), -xx - yy + zz + ww);
+}
+
+#define RAD_2_DEG (180.0f / M_PI)
+
+
+/**
+ * Return an object with the Euler angles {heading, pitch, roll}, in radians.
+ *
+ * Where:
+ *   - heading is from magnetic north, going west (about z-axis).
+ *   - pitch is from vertical, going forward (about y-axis).
+ *   - roll is from vertical, going right (about x-axis).
+ *
+ * Thanks to:
+ *   https://github.com/PenguPilot/PenguPilot/blob/master/autopilot/service/util/quat.c#L103
+ * @param heading 
+ * @param pitch 
+ * @param roll 
+ * @return {object} {heading, pitch, roll} in radians
+ */
+void MadgwickGetEulerAnglesDegrees(float *heading, float *pitch, float *roll)
+{
+  MadgwickGetEulerAngles(heading, pitch, roll);
+
+  *heading *= RAD_2_DEG;
+  *pitch *= RAD_2_DEG;
+  *roll *= RAD_2_DEG;
+}
+
 
 void app_main(void)
 {
@@ -334,14 +411,12 @@ void app_main(void)
         gyroscope();
         magnetometer();
         
-        // MadgwickAHRSupdate(DEG2RAD(gx), DEG2RAD(gy), DEG2RAD(gz), ax, ay, az, mx, my, mz);
-
+        MadgwickAHRSupdate(DEG2RAD(vg.x), DEG2RAD(vg.y), DEG2RAD(vg.z), va.x, va.y, va.z, vm.x, vm.y, vm.z);
+        MadgwickGetEulerAnglesDegrees(&heading, &pitch, &roll);
+        
+        printf("heading: %2.3f°, pitch: %2.3f°, roll: %2.3f°\n", heading, pitch, roll);
         printf("------------------------------------------\n");
         vTaskDelay(50);
-
-        // data_write[0] = AK8963_CNTL1;
-        // i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
-        // printf("AK8963_CNTL = 0x%04X\n", data_read[0]);
     }
 
     /* Demonstrate writing by reseting the MPU9250 */
