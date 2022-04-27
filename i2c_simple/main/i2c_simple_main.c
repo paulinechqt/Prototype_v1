@@ -486,11 +486,8 @@ void app_main(void)
     {
         accelerometer();
         gyroscope();
-        // magnetometer();
-        vm.x = 0.0;
-        vm.y = 0.0;
-        vm.z = 0.0;
-        
+        magnetometer();
+
         MadgwickAHRSupdate(DEG2RAD(vg.x), DEG2RAD(vg.y), DEG2RAD(vg.z), va.x, va.y, va.z, vm.x, vm.y, vm.z);
         MadgwickGetEulerAnglesDegrees(&heading, &pitch, &roll);
         
