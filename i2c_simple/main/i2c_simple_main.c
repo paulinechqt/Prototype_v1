@@ -414,6 +414,7 @@ void app_main(void)
         MadgwickAHRSupdate(DEG2RAD(vg.x), DEG2RAD(vg.y), DEG2RAD(vg.z), va.x, va.y, va.z, vm.x, vm.y, vm.z);
 
         MadgwickGetEulerAnglesDegrees(&heading, &pitch, &roll);
+        
         printf("heading: %2.3f°, pitch: %2.3f°, roll: %2.3f°\n", heading, pitch, roll);
 
         printf("------------------------------------------\n");
