@@ -20,6 +20,7 @@
 #include "esp_log.h"
 #include "driver/i2c.h"
 #include <math.h>
+#include "ble.h"
 
 static const char *TAG = "Prototype";
 
@@ -65,7 +66,7 @@ uint8_t data_read[20];
 
 typedef struct
 {
-  float x, y, z;
+    float x, y, z;
 } vector_t;
 
 vector_t va, vg, vm;
@@ -94,7 +95,7 @@ static esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
 /**
  * @brief i2c master initialization
  */
-static esp_err_t i2c_master_init(void)
+ esp_err_t i2c_master_init(void)
 {
     int i2c_master_port = I2C_MASTER_NUM;
 
@@ -116,7 +117,7 @@ static esp_err_t i2c_master_init(void)
  * @brief Acquisition de l'accélération
  * 
  */
-static vector_t accelerometer(void)
+vector_t accelerometer(void)
 {
     // data_write[0] = MPU9250_WHO_AM_I_REG_ADDR;
     // i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -223,71 +224,71 @@ float invSqrt(float x)
 
 void MadgwickAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az)
 {
-  float recipNorm;
-  float s0, s1, s2, s3;
-  float qDot1, qDot2, qDot3, qDot4;
-  float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2, _8q1, _8q2, q0q0, q1q1, q2q2, q3q3;
+    float recipNorm;
+    float s0, s1, s2, s3;
+    float qDot1, qDot2, qDot3, qDot4;
+    float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2, _8q1, _8q2, q0q0, q1q1, q2q2, q3q3;
 
-  // Rate of change of quaternion from gyroscope
-  qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
-  qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
-  qDot3 = 0.5f * (q0 * gy - q1 * gz + q3 * gx);
-  qDot4 = 0.5f * (q0 * gz + q1 * gy - q2 * gx);
+    // Rate of change of quaternion from gyroscope
+    qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
+    qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
+    qDot3 = 0.5f * (q0 * gy - q1 * gz + q3 * gx);
+    qDot4 = 0.5f * (q0 * gz + q1 * gy - q2 * gx);
 
-  // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
-  if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
-  {
+    // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
+    if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
+    {
 
-    // Normalise accelerometer measurement
-    recipNorm = invSqrt(ax * ax + ay * ay + az * az);
-    ax *= recipNorm;
-    ay *= recipNorm;
-    az *= recipNorm;
+      // Normalise accelerometer measurement
+      recipNorm = invSqrt(ax * ax + ay * ay + az * az);
+      ax *= recipNorm;
+      ay *= recipNorm;
+      az *= recipNorm;
 
-    // Auxiliary variables to avoid repeated arithmetic
-    _2q0 = 2.0f * q0;
-    _2q1 = 2.0f * q1;
-    _2q2 = 2.0f * q2;
-    _2q3 = 2.0f * q3;
-    _4q0 = 4.0f * q0;
-    _4q1 = 4.0f * q1;
-    _4q2 = 4.0f * q2;
-    _8q1 = 8.0f * q1;
-    _8q2 = 8.0f * q2;
-    q0q0 = q0 * q0;
-    q1q1 = q1 * q1;
-    q2q2 = q2 * q2;
-    q3q3 = q3 * q3;
+      // Auxiliary variables to avoid repeated arithmetic
+      _2q0 = 2.0f * q0;
+      _2q1 = 2.0f * q1;
+      _2q2 = 2.0f * q2;
+      _2q3 = 2.0f * q3;
+      _4q0 = 4.0f * q0;
+      _4q1 = 4.0f * q1;
+      _4q2 = 4.0f * q2;
+      _8q1 = 8.0f * q1;
+      _8q2 = 8.0f * q2;
+      q0q0 = q0 * q0;
+      q1q1 = q1 * q1;
+      q2q2 = q2 * q2;
+      q3q3 = q3 * q3;
 
-    // Gradient decent algorithm corrective step
-    s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
-    s1 = _4q1 * q3q3 - _2q3 * ax + 4.0f * q0q0 * q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
-    s2 = 4.0f * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
-    s3 = 4.0f * q1q1 * q3 - _2q1 * ax + 4.0f * q2q2 * q3 - _2q2 * ay;
-    recipNorm = invSqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
-    s0 *= recipNorm;
-    s1 *= recipNorm;
-    s2 *= recipNorm;
-    s3 *= recipNorm;
+      // Gradient decent algorithm corrective step
+      s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
+      s1 = _4q1 * q3q3 - _2q3 * ax + 4.0f * q0q0 * q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
+      s2 = 4.0f * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
+      s3 = 4.0f * q1q1 * q3 - _2q1 * ax + 4.0f * q2q2 * q3 - _2q2 * ay;
+      recipNorm = invSqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
+      s0 *= recipNorm;
+      s1 *= recipNorm;
+      s2 *= recipNorm;
+      s3 *= recipNorm;
 
-    // Apply feedback step
-    qDot1 -= beta * s0;
-    qDot2 -= beta * s1;
-    qDot3 -= beta * s2;
-    qDot4 -= beta * s3;
-  }
+      // Apply feedback step
+      qDot1 -= beta * s0;
+      qDot2 -= beta * s1;
+      qDot3 -= beta * s2;
+      qDot4 -= beta * s3;
+    }
 
-  // Integrate rate of change of quaternion to yield quaternion
-  q0 += qDot1 * (1.0f / sampleFreq);
-  q1 += qDot2 * (1.0f / sampleFreq);
-  q2 += qDot3 * (1.0f / sampleFreq);
-  q3 += qDot4 * (1.0f / sampleFreq);
+    // Integrate rate of change of quaternion to yield quaternion
+    q0 += qDot1 * (1.0f / sampleFreq);
+    q1 += qDot2 * (1.0f / sampleFreq);
+    q2 += qDot3 * (1.0f / sampleFreq);
+    q3 += qDot4 * (1.0f / sampleFreq);
 
-  // Normalise quaternion
-  recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
-  q0 *= recipNorm;
-  q1 *= recipNorm;
-  q2 *= recipNorm;
+    // Normalise quaternion
+    recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+    q0 *= recipNorm;
+    q1 *= recipNorm;
+    q2 *= recipNorm;
   q3 *= recipNorm;
 }
 
@@ -406,12 +407,12 @@ void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float 
 
 float norm_angle_0_2pi(float a)
 {
-  a = fmod(a, M_PI * 2.0);
-  if (a < 0)
-  {
-    a += M_PI * 2.0;
-  }
-  return a;
+    a = fmod(a, M_PI * 2.0);
+    if (a < 0)
+    {
+      a += M_PI * 2.0;
+    }
+    return a;
 }
 
 /**
@@ -428,17 +429,16 @@ float norm_angle_0_2pi(float a)
  */
 void MadgwickGetEulerAngles(float *heading, float *pitch, float *roll)
 {
-  float ww = q0 * q0;
-  float xx = q1 * q1;
-  float yy = q2 * q2;
-  float zz = q3 * q3;
-  *heading = norm_angle_0_2pi(atan2f(2.0 * (q1 * q2 + q3 * q0), xx - yy - zz + ww));
-  *pitch = asinf(-2.0 * (q1 * q3 - q2 * q0));
-  *roll = atan2(2.0 * (q2 * q3 + q1 * q0), -xx - yy + zz + ww);
+    float ww = q0 * q0;
+    float xx = q1 * q1;
+    float yy = q2 * q2;
+    float zz = q3 * q3;
+    *heading = norm_angle_0_2pi(atan2f(2.0 * (q1 * q2 + q3 * q0), xx - yy - zz + ww));
+    *pitch = asinf(-2.0 * (q1 * q3 - q2 * q0));
+    *roll = atan2(2.0 * (q2 * q3 + q1 * q0), -xx - yy + zz + ww);
 }
 
 #define RAD_2_DEG (180.0f / M_PI)
-
 
 /**
  * Return an object with the Euler angles {heading, pitch, roll}, in radians.
@@ -464,6 +464,8 @@ void MadgwickGetEulerAnglesDegrees(float *heading, float *pitch, float *roll)
     *roll *= RAD_2_DEG;
 }
 
+char prof_shared_buf[9] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'};
+
 void app_main(void)
 {
     ESP_ERROR_CHECK(i2c_master_init());
@@ -482,7 +484,9 @@ void app_main(void)
     i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
 
     /* Acquistitions */
-    while(1)
+    bool state = true;
+    // while(state)
+    for (int i=0; i<10; i++)
     {
         accelerometer();
         gyroscope();
@@ -491,13 +495,29 @@ void app_main(void)
         vm.y = 0.0;
         vm.z = 0.0;
         
-        MadgwickAHRSupdate(DEG2RAD(vg.x), DEG2RAD(vg.y), DEG2RAD(vg.z), va.x, va.y, va.z, vm.x, vm.y, vm.z);
-        MadgwickGetEulerAnglesDegrees(&heading, &pitch, &roll);
+        // MadgwickAHRSupdate(DEG2RAD(vg.x), DEG2RAD(vg.y), DEG2RAD(vg.z), va.x, va.y, va.z, vm.x, vm.y, vm.z);
+        // MadgwickGetEulerAnglesDegrees(&heading, &pitch, &roll);
         
-        printf("heading: %2.3f°, pitch: %2.3f°, roll: %2.3f°\n", heading, pitch, roll);
+        // printf("heading: %2.3f°, pitch: %2.3f°, roll: %2.3f°\n", heading, pitch, roll);
         printf("------------------------------------------\n");
+
+    
+
         vTaskDelay(50);
     }
+
+    prof_shared_buf[0] = 'Y';
+    // prof_shared_buf[1] = va.y;
+    // prof_shared_buf[2] = va.z;
+    // prof_shared_buf[3] = vg.x;
+    // prof_shared_buf[4] = vg.y;
+    // prof_shared_buf[5] = vg.z;
+    // prof_shared_buf[6] = vm.x;
+    // prof_shared_buf[7] = vm.y;
+    // prof_shared_buf[8] = vm.z;
+
+    ble();
+    printf("%.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f \n", va.x, va.y, va.z, vg.x, vg.y, vg.z, vm.x, vm.y, vm.z);
 
     /* Demonstrate writing by reseting the MPU9250 */
     ESP_ERROR_CHECK(mpu9250_register_write_byte(MPU9250_PWR_MGMT_1_REG_ADDR, 1 << MPU9250_RESET_BIT));
