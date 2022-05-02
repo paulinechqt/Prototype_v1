@@ -1,11 +1,26 @@
+/* i2c - Simple example
+
+   Simple I2C example that shows how to initialize I2C
+   as well as reading and writing from and to registers for a sensor connected over I2C.
+
+   The sensor used in this example is a MPU9250 inertial measurement unit.
+
+   For other examples please check:
+   https://github.com/espressif/esp-idf/tree/master/examples
+
+   See README.md file to get detailed usage of this example.
+
+   This example code is in the Public Domain (or CC0 licensed, at your option.)
+
+   Unless required by applicable law or agreed to in writing, this
+   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+   CONDITIONS OF ANY KIND, either express or implied.
+*/
 #include <stdio.h>
-#include <stdlib.h>
 #include "esp_log.h"
 #include "driver/i2c.h"
-#include <math.h>
 #include "ble.h"
-
-static const char *TAG = "Prototype";
+#include <math.h>
 
 #define I2C_MASTER_SCL_IO           CONFIG_I2C_MASTER_SCL      /*!< GPIO number used for I2C master clock */
 #define I2C_MASTER_SDA_IO           CONFIG_I2C_MASTER_SDA      /*!< GPIO number used for I2C master data  */
@@ -39,8 +54,10 @@ static const char *TAG = "Prototype";
 #define AK8963_INFO                 0x01
 
 #define MPU9250_INT_ENABLE          0x38
-#define M_PI                        3.14159265
 #define DEG2RAD(deg)                (deg * M_PI / 180.0f)
+#define RAD_2_DEG                   (180.0f / M_PI)
+
+const char *TAG = "Prototype";
 
 float ax, ay, az, gx, gy, gz, mx, my, mz;
 float heading, pitch, roll;
@@ -54,10 +71,14 @@ typedef struct
 
 vector_t va, vg, vm;
 
+volatile float sampleFreq = 50;                            // 2 * proportional gain (Kp)
+volatile float beta = 0.8;                                 // 2 * proportional gain (Kp)
+volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f; // quaternion of sensor frame relative to auxiliary frame
+
 /**
  * @brief Read a sequence of bytes from a MPU9250 sensor registers
  */
-static esp_err_t mpu9250_register_read(uint8_t reg_addr, uint8_t *data, size_t len)
+esp_err_t mpu9250_register_read(uint8_t reg_addr, uint8_t *data, size_t len)
 {
     return i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
 }
@@ -65,7 +86,7 @@ static esp_err_t mpu9250_register_read(uint8_t reg_addr, uint8_t *data, size_t l
 /**
  * @brief Write a byte to a MPU9250 sensor register
  */
-static esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
+esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
 {
     int ret;
     uint8_t write_buf[2] = {reg_addr, data};
@@ -78,7 +99,7 @@ static esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
 /**
  * @brief i2c master initialization
  */
- esp_err_t i2c_master_init(void)
+esp_err_t i2c_master_init(void)
 {
     int i2c_master_port = I2C_MASTER_NUM;
 
@@ -118,7 +139,6 @@ vector_t accelerometer(void)
     float ay = (float)accel_yout/16384;
     float az = (float)accel_zout/16384;
 
-    printf("ACCELEROMETRE \n %.2f g\n %.2f g\n %.2f g\n", ax, ay, az);
     va.x = ax;
     va.y = ay;
     va.z = az;
@@ -129,7 +149,7 @@ vector_t accelerometer(void)
  * @brief Acquision de la vitesse angulaire
  * 
  */
-static vector_t gyroscope(void)
+vector_t gyroscope(void)
 {
     data_write[0] = MPU9250_GYRO_XOUT_H;
     i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 6, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -142,8 +162,6 @@ static vector_t gyroscope(void)
     float gx = (float)gyro_xout/131;
     float gy = (float)gyro_yout/131;
     float gz = (float)gyro_zout/131;
-
-    printf("GYROSCOPE \n %.2f °/s\n %.2f °/s\n %.2f °/s\n", gx, gy, gz);
     
     vg.x = gx;
     vg.y = gy;
@@ -155,7 +173,7 @@ static vector_t gyroscope(void)
  * @brief Acquisition de la direction du champ magnétique
  * 
  */
-static vector_t magnetometer(void)
+vector_t magnetometer(void)
 {
     data_write[0] = AK8963_WHO_AM_I;
     i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -173,20 +191,11 @@ static vector_t magnetometer(void)
     float my = (float)mag_yout*0.6;
     float mz = (float)mag_zout*0.6;
 
-    printf("MAGNETOMETRE \n %.2f µT\n %.2f µT\n %.2f µT\n", mx, my, mz);
-
-    float norme = sqrtf(pow(mx, 2) + pow(my, 2) + pow(mz, 2));
-    printf("Norme du vecteur : %.2f \n", norme);
-
     vm.x = mx;
     vm.y = my;
     vm.z = mz;
     return vm;
 }
-
-volatile float sampleFreq = 50;                            // 2 * proportional gain (Kp)
-volatile float beta = 0.8;                                 // 2 * proportional gain (Kp)
-volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f; // quaternion of sensor frame relative to auxiliary frame
 
 /**
  * @brief Fast inverse square-root
@@ -421,8 +430,6 @@ void MadgwickGetEulerAngles(float *heading, float *pitch, float *roll)
     *roll = atan2(2.0 * (q2 * q3 + q1 * q0), -xx - yy + zz + ww);
 }
 
-#define RAD_2_DEG (180.0f / M_PI)
-
 /**
  * Return an object with the Euler angles {heading, pitch, roll}, in radians.
  *
@@ -466,12 +473,8 @@ void app_main(void)
     uint8_t write_buf[8] = {AK8963_CNTL1, 1 << 1 | 1 << 2}; // 0110 : continuous measurement mode 2
     i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
 
-    ble();
-
     /* Acquistitions */
     bool state = true;
-
-    float tab[10][9];
     // while(state)
     for (int i=0; i<10; i++)
     {
@@ -484,31 +487,16 @@ void app_main(void)
         
         // MadgwickAHRSupdate(DEG2RAD(vg.x), DEG2RAD(vg.y), DEG2RAD(vg.z), va.x, va.y, va.z, vm.x, vm.y, vm.z);
         // MadgwickGetEulerAnglesDegrees(&heading, &pitch, &roll);
-        
+        printf("ACCELEROMETRE : %.3f, %.3f, %.3f\n", va.x, va.y, va.z);
+        printf("GYROSCOPE : %.3f, %.3f, %.3f\n", vg.x, vg.y, vg.z);        
+        printf("MAGNETOMETRE : %.3f, %.3f, %.3f\n", vm.x, vm.y, vm.z);
         // printf("heading: %2.3f°, pitch: %2.3f°, roll: %2.3f°\n", heading, pitch, roll);
-        tab[i][0] = va.x;
-        tab[i][1] = va.y;
-        tab[i][2] = va.z;
-        tab[i][3] = vg.x;
-        tab[i][4] = vg.y;
-        tab[i][5] = vg.z;
-        tab[i][6] = vm.x;
-        tab[i][7] = vm.y;
-        tab[i][8] = vm.z;
-
         printf("------------------------------------------\n");
 
         vTaskDelay(50);
     }
 
-    
-    for (int j = 0; j<10;j++)
-    {   
-        printf("%d\n", j);
-        printf("%.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f\n", tab[j][0], tab[j][1], tab[j][2], tab[j][3], tab[j][4], tab[j][5], tab[j][6], tab[j][7], tab[j][8]);
-    }
-
-    // prof_shared_buf[0] = va.x;
+    prof_shared_buf[0] = 'Y';
     // prof_shared_buf[1] = va.y;
     // prof_shared_buf[2] = va.z;
     // prof_shared_buf[3] = vg.x;
@@ -517,12 +505,13 @@ void app_main(void)
     // prof_shared_buf[6] = vm.x;
     // prof_shared_buf[7] = vm.y;
     // prof_shared_buf[8] = vm.z;
-    
+
+    ble();
     printf("%.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f \n", va.x, va.y, va.z, vg.x, vg.y, vg.z, vm.x, vm.y, vm.z);
 
-    // /* Demonstrate writing by reseting the MPU9250 */
-    // ESP_ERROR_CHECK(mpu9250_register_write_byte(MPU9250_PWR_MGMT_1_REG_ADDR, 1 << MPU9250_RESET_BIT));
+    /* Demonstrate writing by reseting the MPU9250 */
+    ESP_ERROR_CHECK(mpu9250_register_write_byte(MPU9250_PWR_MGMT_1_REG_ADDR, 1 << MPU9250_RESET_BIT));
 
-    // ESP_ERROR_CHECK(i2c_driver_delete(I2C_MASTER_NUM));
-    // ESP_LOGI(TAG, "I2C unitialized successfully");
+    ESP_ERROR_CHECK(i2c_driver_delete(I2C_MASTER_NUM));
+    ESP_LOGI(TAG, "I2C unitialized successfully");
 }
