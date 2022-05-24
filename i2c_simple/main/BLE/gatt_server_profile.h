@@ -28,7 +28,16 @@ void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp
 #define PROFILE_APP_ID 0
 
 #define GATT_SERVER_TAG "GATT_SERVER"
-
 char prof_shared_buf[9];
+
+char buffer_ax[10];
+char buffer_ay[10];
+char buffer_az[10];
+char buffer_gx[10];
+char buffer_gy[10];
+char buffer_gz[10];
+char buffer_mx[10];
+char buffer_my[10];
+char buffer_mz[10];
 
 #endif /* MAIN_GATT_SERVER_PROFILE_H_ */

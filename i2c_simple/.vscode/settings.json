@@ -16,7 +16,14 @@
     "functional": "c",
     "tuple": "c",
     "type_traits": "c",
-    "utility": "c"
+    "utility": "c",
+    "cstdlib": "c",
+    "regex": "c",
+    "cstddef": "c",
+    "*.ipp": "c",
+    "condition_variable": "c",
+    "future": "c",
+    "*.tcc": "c"
   },
   "idf.adapterTargetName": "esp32"
 }
