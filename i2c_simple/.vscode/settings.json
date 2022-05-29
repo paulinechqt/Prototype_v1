@@ -23,7 +23,9 @@
     "*.ipp": "c",
     "condition_variable": "c",
     "future": "c",
-    "*.tcc": "c"
+    "*.tcc": "c",
+    "esp_gatts_api.h": "c",
+    "random": "c"
   },
   "idf.adapterTargetName": "esp32"
 }

@@ -22,7 +22,7 @@
 #define GATTS_SERVICE_UUID   0xFF10
 #define GATTS_CHAR_UUID      0xFF12
 #define GATTS_DESCR_UUID     0x3333
-#define GATTS_NUM_HANDLE     21
+#define GATTS_NUM_HANDLE     4
 
 #define TEST_DEVICE_NAME            "ESP32"
 //#define TEST_MANUFACTURER_DATA_LEN  17
@@ -170,14 +170,15 @@ void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
 
         // Here we fill the rsp (response) structure with our data (i.e. the temperature value).
+        
         rsp.attr_value.handle = param->read.handle;
-        rsp.attr_value.len = 10;
-        for (int i=0; i<10; i++)
+        rsp.attr_value.len = 21;
+        for (int i=0; i<500; i++)
         {
-            rsp.attr_value.value[i] = buffer_ax[i];
+            rsp.attr_value.value[i] = buffer_to_send[i];
         }
-         esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
-                                     ESP_GATT_OK, &rsp);
+        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
+                                    ESP_GATT_OK, &rsp);
 
         break;
     }
@@ -294,8 +295,3 @@ void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp
     gatts_profile_event_handler(event, gatts_if, param);
     ESP_LOGI(GATT_SERVER_TAG, "gatts_event_handler end");
 }
-
-
-
-
-

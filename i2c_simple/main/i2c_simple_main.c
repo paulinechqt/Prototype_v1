@@ -451,7 +451,6 @@ void MadgwickGetEulerAnglesDegrees(float *heading, float *pitch, float *roll)
 }
 
 
-// char buffer_ay[500];
 // char buffer_az[500];
 // char buffer_gx[500];
 // char buffer_gy[500];
@@ -461,13 +460,14 @@ void MadgwickGetEulerAnglesDegrees(float *heading, float *pitch, float *roll)
 // char buffer_mz[500];
 
 char buffer_ax[30];
+char buffer_ay[30];
 int limit = 100;
 float tab;
 
-void format(float val)
+void format(float val, char buffer[30])
 {
-    sprintf(buffer_ax, "%f", val);
-    printf("%s\n", buffer_ax);
+    sprintf(buffer, "%f", val);
+    printf("%s\n", buffer);
 }
 
 void Task1_acquisition()
@@ -481,11 +481,17 @@ void Task1_acquisition()
         // gyroscope();
         // magnetometer();
 
+
+        // for (float i=0.000; i<100; i++)
+        // {
+        //     xQueueSend(queue_ax, (void *)(&i), pdMS_TO_TICKS(1000));
+        // }
+
         // Envoi 3 vecteurs (9 axes) dans les queues
         xQueueSend(queue_ax, (void *)(&va.x), pdMS_TO_TICKS(1000));
         // printf("Valeur envoyée : %f\n", va.x);
-        // xQueueSend(queue_ax, (void *)(&va.y), pdMS_TO_TICKS(100));
-        // xQueueSend(queue_ay, (void *)(&va.z), pdMS_TO_TICKS(100));
+        // xQueueSend(queue_ay, (void *)(&va.y), pdMS_TO_TICKS(1000));
+        // xQueueSend(queue_az, (void *)(&va.z), pdMS_TO_TICKS(100));
         // xQueueSend(queue_gx, (void *)(&vg.x), pdMS_TO_TICKS(100));
         // xQueueSend(queue_gy, (void *)(&vg.y), pdMS_TO_TICKS(100));
         // xQueueSend(queue_gz, (void *)(&vg.z), pdMS_TO_TICKS(100));
@@ -506,14 +512,14 @@ void queue_verif(QueueHandle_t queue_ax, QueueHandle_t queue_ay, QueueHandle_t q
     }
 }
 
-void ble_send_value(QueueHandle_t queue)
+void ble_send_value(QueueHandle_t queue, char buffer[30])
 {
     float val;
     if (pdTRUE == xQueueReceive(queue, (void *)(&val), pdMS_TO_TICKS(1000)))
     {
         printf("Valeur reçue : %f\n", val);
         printf("----------------------\n\n");
-        format(val);
+        format(val, buffer);
     }
 }
 
@@ -523,8 +529,8 @@ void Task2_BLE()
     {
         printf("task2_BLE\n");
         // Envoie dans valeurs dans les caractéristiques du BLE
-        ble_send_value(queue_ax);
-        // ble_send_value(queue_ay);
+        ble_send_value(queue_ax, buffer_ax);
+        // ble_send_value(queue_ay, buffer_ay);
         // ble_send_value(queue_az);
         // ble_send_value(queue_gx);
         // ble_send_value(queue_gy);
@@ -537,8 +543,6 @@ void Task2_BLE()
     }
 }
 
-
-
 void createQueues()
 {
     TaskHandle_t Task1_acquisition_handle = NULL;
@@ -546,14 +550,14 @@ void createQueues()
 
     // Création des 9 queues
     queue_ax = xQueueCreate(1000,sizeof(float));   
-    // queue_ay = xQueueCreate(50,sizeof(float));
-    // queue_az = xQueueCreate(50,sizeof(float));
-    // queue_gx = xQueueCreate(50,sizeof(float));
-    // queue_gy = xQueueCreate(50,sizeof(float));
-    // queue_gz = xQueueCreate(50,sizeof(float));
-    // queue_mx = xQueueCreate(50,sizeof(float));
-    // queue_my = xQueueCreate(50,sizeof(float));
-    // queue_mz = xQueueCreate(50,sizeof(float));
+    queue_ay = xQueueCreate(100,sizeof(float));
+    // queue_az = xQueueCreate(100,sizeof(float));
+    // queue_gx = xQueueCreate(100,sizeof(float));
+    // queue_gy = xQueueCreate(100,sizeof(float));
+    // queue_gz = xQueueCreate(100,sizeof(float));
+    // queue_mx = xQueueCreate(100,sizeof(float));
+    // queue_my = xQueueCreate(100,sizeof(float));
+    // queue_mz = xQueueCreate(100,sizeof(float));
 
     // Vérification création des 9 queues
     // queue_verif(queue_ax, queue_ay, queue_az, queue_gx, queue_gy, queue_gz, queue_mx, queue_my, queue_mz);
@@ -562,6 +566,32 @@ void createQueues()
     xTaskCreate(Task1_acquisition, "Task 1 acquisiton", 10000, NULL, 1, &Task1_acquisition_handle);
     xTaskCreate(Task2_BLE, "Task 2 BLE", 10000, NULL, 1, &Task2_BLE_handle);
 }
+
+char buffer_to_send[1000];
+
+float tab_ax[100];
+float tab_ay[100];
+float tab_az[100];
+
+
+void concatenation()
+{
+    for (int i=0; i<40; i++)
+    {
+        accelerometer();
+        tab_ax[i]=va.x;
+        tab_ay[i]=va.y;
+        tab_az[i]=va.z;
+        vTaskDelay(pdMS_TO_TICKS(10)); // fréquence d'acquisition de 10 ms soit 100 Hz
+    }
+
+    for(int i=0; i<40; i++)
+    {
+        sprintf(buffer_to_send+strlen(buffer_to_send), "%.3f,%.3f,%.3f", tab_ax[i],tab_ay[i], tab_az[i]);
+    }
+    
+}
+
 
 void app_main(void)
 {
@@ -575,7 +605,9 @@ void app_main(void)
     i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);    
     
     ble();
-    createQueues();
+    // createQueues();
+
+    concatenation();
 
 
     // float acc_x = 15.526, acc_y = 16.364;
