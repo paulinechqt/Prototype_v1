@@ -27,7 +27,7 @@
 #define TEST_DEVICE_NAME            "ESP32"
 //#define TEST_MANUFACTURER_DATA_LEN  17
 
-#define GATTS_DEMO_CHAR_VAL_LEN_MAX		0x40
+#define GATTS_DEMO_CHAR_VAL_LEN_MAX		0x80
 
 uint8_t char1_str[] = {0x11,0x22,0x33};
 uint8_t char2_str_ay[] = {0x44,0x55,0x66};

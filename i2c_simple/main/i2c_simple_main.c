@@ -587,9 +587,10 @@ void concatenation()
 
     for(int i=0; i<40; i++)
     {
-        sprintf(buffer_to_send+strlen(buffer_to_send), "%.3f,%.3f,%.3f", tab_ax[i],tab_ay[i], tab_az[i]);
+        sprintf(buffer_to_send+strlen(buffer_to_send), "%.3f,%.3f,%.3f,", tab_ax[i], tab_ay[i], tab_az[i]);
     }
-    
+    printf("buffer_to_send : %s\n", buffer_to_send);
+    printf("Longueur du buffer : %d\n", strlen(buffer_to_send));
 }
 
 
