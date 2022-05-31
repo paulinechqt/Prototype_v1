@@ -1,27 +1,14 @@
-/* i2c - Simple example
-
-   Simple I2C example that shows how to initialize I2C
-   as well as reading and writing from and to registers for a sensor connected over I2C.
-
-   The sensor used in this example is a MPU9250 inertial measurement unit.
-
-   For other examples please check:
-   https://github.com/espressif/esp-idf/tree/master/examples
-
-   See README.md file to get detailed usage of this example.
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "esp_log.h"
 #include "driver/i2c.h"
+#include "ble.h"
 #include <math.h>
-
-static const char *TAG = "Prototype";
+#include<time.h>
+#include"freertos/FreeRTOS.h"
+#include"freertos/task.h"
+#include "freertos/queue.h"
 
 #define I2C_MASTER_SCL_IO           CONFIG_I2C_MASTER_SCL      /*!< GPIO number used for I2C master clock */
 #define I2C_MASTER_SDA_IO           CONFIG_I2C_MASTER_SDA      /*!< GPIO number used for I2C master data  */
@@ -52,28 +39,43 @@ static const char *TAG = "Prototype";
 
 #define AK8963_CNTL1                0x0A        // Power down (0000), single-measurement (0001), self-test (1000) and Fuse ROM (1111) modes on bits 3:0
 #define AK8963_ASTC                 0x0C        // Self test control
-#define AK8963_INFO                 0x01
+#define AK8963_INFO                 0x01        
+#define AK8963_ASAX                 0x10        // Magnetic sensor X-axis sensitivity adjustment value
+#define AK8963_ASAY                 0x11        // Magnetic sensor Y-axis sensitivity adjustment value
+#define AK8963_ASAZ                 0x12        // Magnetic sensor Z-axis sensitivity adjustment value
+#define AK8963_STATUS_1             0x02
+#define AK8963_STATUS_2             0x09
 
 #define MPU9250_INT_ENABLE          0x38
-#define M_PI                        3.14159265
 #define DEG2RAD(deg)                (deg * M_PI / 180.0f)
+#define RAD_2_DEG                   (180.0f / M_PI)
+
+const char *TAG = "Prototype";
+
+QueueHandle_t queue_ax, queue_ay, queue_az, queue_gx, queue_gy, queue_gz, queue_mx, queue_my, queue_mz;
 
 float ax, ay, az, gx, gy, gz, mx, my, mz;
 float heading, pitch, roll;
 uint8_t data_write[20];
 uint8_t data_read[20];
 
+char prof_shared_buf[20] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'j', 'k'};
+
 typedef struct
 {
-  float x, y, z;
+    float x, y, z;
 } vector_t;
 
 vector_t va, vg, vm;
 
+volatile float sampleFreq = 50;                            // 2 * proportional gain (Kp)
+volatile float beta = 0.8;                                 // 2 * proportional gain (Kp)
+volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f; // quaternion of sensor frame relative to auxiliary frame
+
 /**
  * @brief Read a sequence of bytes from a MPU9250 sensor registers
  */
-static esp_err_t mpu9250_register_read(uint8_t reg_addr, uint8_t *data, size_t len)
+esp_err_t mpu9250_register_read(uint8_t reg_addr, uint8_t *data, size_t len)
 {
     return i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
 }
@@ -81,7 +83,7 @@ static esp_err_t mpu9250_register_read(uint8_t reg_addr, uint8_t *data, size_t l
 /**
  * @brief Write a byte to a MPU9250 sensor register
  */
-static esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
+esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
 {
     int ret;
     uint8_t write_buf[2] = {reg_addr, data};
@@ -94,7 +96,7 @@ static esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
 /**
  * @brief i2c master initialization
  */
-static esp_err_t i2c_master_init(void)
+esp_err_t i2c_master_init(void)
 {
     int i2c_master_port = I2C_MASTER_NUM;
 
@@ -112,11 +114,14 @@ static esp_err_t i2c_master_init(void)
     return i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
 }
 
+float accelerometer_scale();
+float gyroscope_scale();
+
 /**
  * @brief Acquisition de l'accélération
  * 
  */
-static vector_t accelerometer(void)
+vector_t accelerometer(void)
 {
     // data_write[0] = MPU9250_WHO_AM_I_REG_ADDR;
     // i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -130,11 +135,10 @@ static vector_t accelerometer(void)
     int16_t accel_yout = (int16_t)((data_read[2] << 8) | data_read[3]);
     int16_t accel_zout = (int16_t)((data_read[4] << 8) | data_read[5]);
 
-    float ax = (float)accel_xout/16384; // LSB/g -> g
-    float ay = (float)accel_yout/16384;
-    float az = (float)accel_zout/16384;
+    float ax = (float)accel_xout/accelerometer_scale(); // LSB/g -> g
+    float ay = (float)accel_yout/accelerometer_scale();
+    float az = (float)accel_zout/accelerometer_scale();
 
-    printf("ACCELEROMETRE \n %.2f g\n %.2f g\n %.2f g\n", ax, ay, az);
     va.x = ax;
     va.y = ay;
     va.z = az;
@@ -142,15 +146,16 @@ static vector_t accelerometer(void)
 }
 
 /**
+ * 
  * @brief Acquision de la vitesse angulaire
  * 
  */
-static vector_t gyroscope(void)
+vector_t gyroscope(void)
 {
     data_write[0] = MPU9250_GYRO_XOUT_H;
     i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 6, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
     
-    // Registres : High puis Low
+    // Registres : High then Low
     int16_t gyro_xout = (int16_t)((data_read[0] << 8) | data_read[1]);
     int16_t gyro_yout = (int16_t)((data_read[2] << 8) | data_read[3]);
     int16_t gyro_zout = (int16_t)((data_read[4] << 8) | data_read[5]);
@@ -158,8 +163,6 @@ static vector_t gyroscope(void)
     float gx = (float)gyro_xout/131;
     float gy = (float)gyro_yout/131;
     float gz = (float)gyro_zout/131;
-
-    printf("GYROSCOPE \n %.2f °/s\n %.2f °/s\n %.2f °/s\n", gx, gy, gz);
     
     vg.x = gx;
     vg.y = gy;
@@ -171,17 +174,25 @@ static vector_t gyroscope(void)
  * @brief Acquisition de la direction du champ magnétique
  * 
  */
-static vector_t magnetometer(void)
+vector_t magnetometer(void)
 {
     data_write[0] = AK8963_WHO_AM_I;
     i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
-    printf("WHO_AM_I (should return 0x48) = 0x%04X\n", data_read[0]);
+    if (data_read[0 != 0x48])
+    {
+        perror("WHO_AM_I Magnetometer");
+    }
+    else
+    {
+        printf("WHO_AM_I (should return 0x48) = 0x%04X\n", data_read[0]);  
+    }
+
 
     data_write[0] = AK8963_XOUT_L;
     i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 6, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
 
     // Register : Low then High
-    int16_t mag_xout = (int16_t)((data_read[1] << 8) | data_read[0]); 
+    int16_t mag_xout = (int16_t)((data_read[1] << 8) | data_read[0]);
     int16_t mag_yout = (int16_t)((data_read[3] << 8) | data_read[2]);
     int16_t mag_zout = (int16_t)((data_read[5] << 8) | data_read[4]);
 
@@ -189,20 +200,16 @@ static vector_t magnetometer(void)
     float my = (float)mag_yout*0.6;
     float mz = (float)mag_zout*0.6;
 
-    printf("MAGNETOMETRE \n %.2f µT\n %.2f µT\n %.2f µT\n", mx, my, mz);
-
-    float norme = sqrtf(pow(mx, 2) + pow(my, 2) + pow(mz, 2));
-    printf("Norme du vecteur : %.2f \n", norme);
-
     vm.x = mx;
     vm.y = my;
     vm.z = mz;
+    
+    data_write[0] = AK8963_STATUS_2;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_STATUS_2: %d\n\n", data_read[0]);
+    
     return vm;
 }
-
-volatile float sampleFreq = 50;                            // 2 * proportional gain (Kp)
-volatile float beta = 0.8;                                 // 2 * proportional gain (Kp)
-volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f; // quaternion of sensor frame relative to auxiliary frame
 
 /**
  * @brief Fast inverse square-root
@@ -223,71 +230,71 @@ float invSqrt(float x)
 
 void MadgwickAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az)
 {
-  float recipNorm;
-  float s0, s1, s2, s3;
-  float qDot1, qDot2, qDot3, qDot4;
-  float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2, _8q1, _8q2, q0q0, q1q1, q2q2, q3q3;
+    float recipNorm;
+    float s0, s1, s2, s3;
+    float qDot1, qDot2, qDot3, qDot4;
+    float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2, _8q1, _8q2, q0q0, q1q1, q2q2, q3q3;
 
-  // Rate of change of quaternion from gyroscope
-  qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
-  qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
-  qDot3 = 0.5f * (q0 * gy - q1 * gz + q3 * gx);
-  qDot4 = 0.5f * (q0 * gz + q1 * gy - q2 * gx);
+    // Rate of change of quaternion from gyroscope
+    qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
+    qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
+    qDot3 = 0.5f * (q0 * gy - q1 * gz + q3 * gx);
+    qDot4 = 0.5f * (q0 * gz + q1 * gy - q2 * gx);
 
-  // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
-  if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
-  {
+    // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
+    if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
+    {
 
-    // Normalise accelerometer measurement
-    recipNorm = invSqrt(ax * ax + ay * ay + az * az);
-    ax *= recipNorm;
-    ay *= recipNorm;
-    az *= recipNorm;
+      // Normalise accelerometer measurement
+      recipNorm = invSqrt(ax * ax + ay * ay + az * az);
+      ax *= recipNorm;
+      ay *= recipNorm;
+      az *= recipNorm;
 
-    // Auxiliary variables to avoid repeated arithmetic
-    _2q0 = 2.0f * q0;
-    _2q1 = 2.0f * q1;
-    _2q2 = 2.0f * q2;
-    _2q3 = 2.0f * q3;
-    _4q0 = 4.0f * q0;
-    _4q1 = 4.0f * q1;
-    _4q2 = 4.0f * q2;
-    _8q1 = 8.0f * q1;
-    _8q2 = 8.0f * q2;
-    q0q0 = q0 * q0;
-    q1q1 = q1 * q1;
-    q2q2 = q2 * q2;
-    q3q3 = q3 * q3;
+      // Auxiliary variables to avoid repeated arithmetic
+      _2q0 = 2.0f * q0;
+      _2q1 = 2.0f * q1;
+      _2q2 = 2.0f * q2;
+      _2q3 = 2.0f * q3;
+      _4q0 = 4.0f * q0;
+      _4q1 = 4.0f * q1;
+      _4q2 = 4.0f * q2;
+      _8q1 = 8.0f * q1;
+      _8q2 = 8.0f * q2;
+      q0q0 = q0 * q0;
+      q1q1 = q1 * q1;
+      q2q2 = q2 * q2;
+      q3q3 = q3 * q3;
 
-    // Gradient decent algorithm corrective step
-    s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
-    s1 = _4q1 * q3q3 - _2q3 * ax + 4.0f * q0q0 * q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
-    s2 = 4.0f * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
-    s3 = 4.0f * q1q1 * q3 - _2q1 * ax + 4.0f * q2q2 * q3 - _2q2 * ay;
-    recipNorm = invSqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
-    s0 *= recipNorm;
-    s1 *= recipNorm;
-    s2 *= recipNorm;
-    s3 *= recipNorm;
+      // Gradient decent algorithm corrective step
+      s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
+      s1 = _4q1 * q3q3 - _2q3 * ax + 4.0f * q0q0 * q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
+      s2 = 4.0f * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
+      s3 = 4.0f * q1q1 * q3 - _2q1 * ax + 4.0f * q2q2 * q3 - _2q2 * ay;
+      recipNorm = invSqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
+      s0 *= recipNorm;
+      s1 *= recipNorm;
+      s2 *= recipNorm;
+      s3 *= recipNorm;
 
-    // Apply feedback step
-    qDot1 -= beta * s0;
-    qDot2 -= beta * s1;
-    qDot3 -= beta * s2;
-    qDot4 -= beta * s3;
-  }
+      // Apply feedback step
+      qDot1 -= beta * s0;
+      qDot2 -= beta * s1;
+      qDot3 -= beta * s2;
+      qDot4 -= beta * s3;
+    }
 
-  // Integrate rate of change of quaternion to yield quaternion
-  q0 += qDot1 * (1.0f / sampleFreq);
-  q1 += qDot2 * (1.0f / sampleFreq);
-  q2 += qDot3 * (1.0f / sampleFreq);
-  q3 += qDot4 * (1.0f / sampleFreq);
+    // Integrate rate of change of quaternion to yield quaternion
+    q0 += qDot1 * (1.0f / sampleFreq);
+    q1 += qDot2 * (1.0f / sampleFreq);
+    q2 += qDot3 * (1.0f / sampleFreq);
+    q3 += qDot4 * (1.0f / sampleFreq);
 
-  // Normalise quaternion
-  recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
-  q0 *= recipNorm;
-  q1 *= recipNorm;
-  q2 *= recipNorm;
+    // Normalise quaternion
+    recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+    q0 *= recipNorm;
+    q1 *= recipNorm;
+    q2 *= recipNorm;
   q3 *= recipNorm;
 }
 
@@ -406,12 +413,12 @@ void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float 
 
 float norm_angle_0_2pi(float a)
 {
-  a = fmod(a, M_PI * 2.0);
-  if (a < 0)
-  {
-    a += M_PI * 2.0;
-  }
-  return a;
+    a = fmod(a, M_PI * 2.0);
+    if (a < 0)
+    {
+      a += M_PI * 2.0;
+    }
+    return a;
 }
 
 /**
@@ -428,17 +435,14 @@ float norm_angle_0_2pi(float a)
  */
 void MadgwickGetEulerAngles(float *heading, float *pitch, float *roll)
 {
-  float ww = q0 * q0;
-  float xx = q1 * q1;
-  float yy = q2 * q2;
-  float zz = q3 * q3;
-  *heading = norm_angle_0_2pi(atan2f(2.0 * (q1 * q2 + q3 * q0), xx - yy - zz + ww));
-  *pitch = asinf(-2.0 * (q1 * q3 - q2 * q0));
-  *roll = atan2(2.0 * (q2 * q3 + q1 * q0), -xx - yy + zz + ww);
+    float ww = q0 * q0;
+    float xx = q1 * q1;
+    float yy = q2 * q2;
+    float zz = q3 * q3;
+    *heading = norm_angle_0_2pi(atan2f(2.0 * (q1 * q2 + q3 * q0), xx - yy - zz + ww));
+    *pitch = asinf(-2.0 * (q1 * q3 - q2 * q0));
+    *roll = atan2(2.0 * (q2 * q3 + q1 * q0), -xx - yy + zz + ww);
 }
-
-#define RAD_2_DEG (180.0f / M_PI)
-
 
 /**
  * Return an object with the Euler angles {heading, pitch, roll}, in radians.
@@ -464,41 +468,335 @@ void MadgwickGetEulerAnglesDegrees(float *heading, float *pitch, float *roll)
     *roll *= RAD_2_DEG;
 }
 
-void app_main(void)
-{
-    ESP_ERROR_CHECK(i2c_master_init());
-    ESP_LOGI(TAG, "I2C initialized successfully");
+char buffer_ax[30];
+char buffer_ay[30];
+int limit = 100;
+float tab;
 
-    uint8_t write_buf_test[8] = {MPU9250_RA_USER_CTRL, 0 << 1}; // 0110 : continuous measurement mode 2
-    i2c_master_write_to_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, write_buf_test, sizeof(write_buf_test), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+void format(float val, char buffer[30])
+{
+    sprintf(buffer, "%f", val);
+    printf("%s\n", buffer);
+}
+
+void Task1_acquisition()
+{
+    while(1)
+    {
+        // printf("Task1_acquisition\n");
+
+        // Acquisition
+        accelerometer();
+        // gyroscope();
+        // magnetometer();
+
+
+        // for (float i=0.000; i<100; i++)
+        // {
+        //     xQueueSend(queue_ax, (void *)(&i), pdMS_TO_TICKS(1000));
+        // }
+
+        // Envoi 3 vecteurs (9 axes) dans les queues
+        xQueueSend(queue_ax, (void *)(&va.x), pdMS_TO_TICKS(1000));
+        // printf("Valeur envoyée : %f\n", va.x);
+        // xQueueSend(queue_ay, (void *)(&va.y), pdMS_TO_TICKS(1000));
+        // xQueueSend(queue_az, (void *)(&va.z), pdMS_TO_TICKS(100));
+        // xQueueSend(queue_gx, (void *)(&vg.x), pdMS_TO_TICKS(100));
+        // xQueueSend(queue_gy, (void *)(&vg.y), pdMS_TO_TICKS(100));
+        // xQueueSend(queue_gz, (void *)(&vg.z), pdMS_TO_TICKS(100));
+        // xQueueSend(queue_mx, (void *)(&vm.x), pdMS_TO_TICKS(100));
+        // xQueueSend(queue_my, (void *)(&vm.y), pdMS_TO_TICKS(100));
+        // xQueueSend(queue_mz, (void *)(&vm.z), pdMS_TO_TICKS(100));
+
+        vTaskDelay(10);
+
+    }
+}
+
+void queue_verif(QueueHandle_t queue_ax, QueueHandle_t queue_ay, QueueHandle_t queue_az, QueueHandle_t queue_gx, QueueHandle_t queue_gy, QueueHandle_t queue_gz, QueueHandle_t queue_mx, QueueHandle_t queue_my, QueueHandle_t queue_mz)
+{
+    if (queue_ax == NULL || queue_ay == NULL || queue_az == NULL || queue_gx ==  NULL || queue_gy == NULL || queue_gz == NULL || queue_mx == NULL || queue_my == NULL || queue_mz == NULL)
+    {
+        exit(EXIT_FAILURE);
+    }
+}
+
+void ble_send_value(QueueHandle_t queue, char buffer[30])
+{
+    float val;
+    if (pdTRUE == xQueueReceive(queue, (void *)(&val), pdMS_TO_TICKS(1000)))
+    {
+        printf("Valeur reçue : %f\n", val);
+        printf("----------------------\n\n");
+        format(val, buffer);
+    }
+}
+
+void Task2_BLE()
+{
+    while(1)
+    {
+        printf("task2_BLE\n");
+        // Envoie dans valeurs dans les caractéristiques du BLE
+        ble_send_value(queue_ax, buffer_ax);
+        // ble_send_value(queue_ay, buffer_ay);
+        // ble_send_value(queue_az);
+        // ble_send_value(queue_gx);
+        // ble_send_value(queue_gy);
+        // ble_send_value(queue_gz);
+        // ble_send_value(queue_mx);
+        // ble_send_value(queue_my);
+        // ble_send_value(queue_mz);
+
+        vTaskDelay(100);
+    }
+}
+
+void createQueues()
+{
+    TaskHandle_t Task1_acquisition_handle = NULL;
+    TaskHandle_t Task2_BLE_handle = NULL;
+
+    // Création des 9 queues
+    queue_ax = xQueueCreate(1000,sizeof(float));   
+    queue_ay = xQueueCreate(100,sizeof(float));
+    // queue_az = xQueueCreate(100,sizeof(float));
+    // queue_gx = xQueueCreate(100,sizeof(float));
+    // queue_gy = xQueueCreate(100,sizeof(float));
+    // queue_gz = xQueueCreate(100,sizeof(float));
+    // queue_mx = xQueueCreate(100,sizeof(float));
+    // queue_my = xQueueCreate(100,sizeof(float));
+    // queue_mz = xQueueCreate(100,sizeof(float));
+
+    // Vérification création des 9 queues
+    // queue_verif(queue_ax, queue_ay, queue_az, queue_gx, queue_gy, queue_gz, queue_mx, queue_my, queue_mz);
+
+    // Lancement des tâches
+    xTaskCreate(Task1_acquisition, "Task 1 acquisiton", 10000, NULL, 1, &Task1_acquisition_handle);
+    xTaskCreate(Task2_BLE, "Task 2 BLE", 10000, NULL, 1, &Task2_BLE_handle);
+}
+
+char buffer_to_send[1000];
+
+float tab_ax[100];
+float tab_ay[100];
+float tab_az[100];
+
+
+void concatenation()
+{
+    for (int i=0; i<40; i++)
+    {
+        // accelerometer();
+        // tab_ax[i]=va.x;
+        // tab_ay[i]=va.y;
+        // tab_az[i]=va.z;
+        tab_ax[i]=i;
+        tab_ay[i]=i;
+        tab_az[i]=i;
+        vTaskDelay(pdMS_TO_TICKS(10)); // fréquence d'acquisition de 10 ms soit 100 Hz
+    }
+
+    for(int i=0; i<40; i++)
+    {
+        sprintf(buffer_to_send+strlen(buffer_to_send), "%.3f,%.3f,%.3f,", tab_ax[i], tab_ay[i], tab_az[i]);
+    }
+    printf("buffer_to_send : %s\n", buffer_to_send);
+    printf("Longueur du buffer : %d\n", strlen(buffer_to_send));
+}
+
+void startMagnetometer()
+{
+    mpu9250_register_write_byte(MPU9250_RA_USER_CTRL, 0 << 5);
 
     data_write[0] = MPU9250_RA_USER_CTRL;
     i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
-    printf("MPU9250_RA_USER_CTRL : 0x%04X\n", data_read[0]);
+    printf("MPU9250_RA_USER_CTRL (should return 0): 0x%04X\n", data_read[0]);
 
-    mpu9250_register_write_byte(MPU9250_INT_PIN_CFG, 1 << 1); // Ecriture dans le registre pour activer le mode pass-through
 
-    uint8_t write_buf[8] = {AK8963_CNTL1, 1 << 1 | 1 << 2}; // 0110 : continuous measurement mode 2
-    i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    mpu9250_register_write_byte(MPU9250_INT_PIN_CFG, 1 << 1);
 
-    /* Acquistitions */
-    while(1)
+    data_write[0] = MPU9250_INT_PIN_CFG;
+    i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("MPU9250_INT_PIN_CFG (should return 2): 0x%04X\n", data_read[0]);
+
+    // Setup the Magnetomete to fuse ROM accesse mode to get the Sensitivity Adjustment
+    uint8_t write_buf_2[8] = {AK8963_CNTL1, 1 << 0 | 1 << 1 | 1 << 2 | 1 << 3 | 1 << 4}; // 0001 1111 : Fuse ROM access mode
+    i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf_2, sizeof(write_buf_2), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+
+    data_write[0] = AK8963_CNTL1;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_CNTL1 (should return 1F): 0x%04X\n\n", data_read[0]);
+
+    // Wait for the mode changes
+    vTaskDelay(100/portTICK_PERIOD_MS); 
+
+    // Read the Sensitivity Adjustement values and calculations
+    data_write[0] = AK8963_ASAX;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_ASAX : 0x%04X\n", data_read[0]);
+    printf("AK8963_ASAX décimal : 0x%d\n\n", data_read[0]);
+    float asax = (data_read[0]-128)*0.5/128+1;
+
+    data_write[0] = AK8963_ASAY;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_ASAY : 0x%08X\n", data_read[0]);
+    printf("AK8963_ASAY décimal : 0x%d\n\n", data_read[0]);
+    float asay = (data_read[0]-128)*0.5/128+1;
+
+    data_write[0] = AK8963_ASAZ;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_ASAZ : 0x%08X\n", data_read[0]);
+    printf("AK8963_ASAZ décimal : 0x%d\n\n", data_read[0]);
+    float asaz = (data_read[0]-128)*0.5/128+1;
+
+    printf("asax = %.3f\nasay = %.3f\nasaz = %.3f\n", asax, asay, asaz);
+
+    // Reset the magnetometer to power down mode
+    uint8_t write_buf_3[8] = {AK8963_CNTL1, 0 << 0 | 0 << 1 | 0 << 2 | 0 << 3 | 0 << 4};
+    i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf_3, sizeof(write_buf_3), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+
+    data_write[0] = AK8963_CNTL1;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_CNTL1 power off (should return 0): 0x%04X\n\n", data_read[0]);
+
+    //  Wait for the mode changes
+    vTaskDelay(100/portTICK_PERIOD_MS);
+
+    // Set the magnetometer to continuous mode 2 (100Hz) and 16-bit output
+    uint8_t write_buf_4[8] = {AK8963_CNTL1, 1 << 1 | 1 << 2 | 1 << 4}; // 0001 1111 : Fuse ROM access mode
+    i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf_4, sizeof(write_buf_4), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+
+    data_write[0] = AK8963_CNTL1;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_CNTL1 continuous mode 2 (should return 16): 0x%04X\n\n", data_read[0]);
+
+    //  Wait for the mode changes
+    vTaskDelay(100/portTICK_PERIOD_MS);
+
+    data_write[0] = AK8963_STATUS_1;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_STATUS_1 (1 : ready | 0 : not ready): %d\n\n", data_read[0]);
+}
+
+void app_main(void)
+{
+    
+    ESP_ERROR_CHECK(i2c_master_init());
+    ESP_LOGI(TAG, "I2C initialized successfully");
+
+    startMagnetometer();
+
+    // ble();
+    // createQueues();
+    // concatenation();
+
+
+    // float acc_x = 15.526, acc_y = 16.364;
+    // char buffer[2000];
+    // sprintf(buffer, "%.3f,%.3f", acc_x, acc_y);
+    // printf("%s\n", buffer);
+    // int len;
+    // len = strlen(buffer);
+    // printf("Length of |%s| is |%d|\n", buffer, len);
+
+
+    /* Acquisitions */
+    bool state = true;
+    // for (int i=0; i<1; i++)
+    while(state)
     {
-        accelerometer();
-        gyroscope();
-        magnetometer();
+        accelerometer(); //return vector_t va.x, va.y, va.z
+        gyroscope(); //return vector_t vg.x, vg.y, vg.z
+        magnetometer(); //return vector_t vm.x, vm.y, vm.z
 
-        MadgwickAHRSupdate(DEG2RAD(vg.x), DEG2RAD(vg.y), DEG2RAD(vg.z), va.x, va.y, va.z, vm.x, vm.y, vm.z);
-        MadgwickGetEulerAnglesDegrees(&heading, &pitch, &roll);
-        
-        printf("heading: %2.3f°, pitch: %2.3f°, roll: %2.3f°\n", heading, pitch, roll);
+        printf("ACCELEROMETRE : %.3f, %.3f, %.3f\n", va.x, va.y, va.z);
+        printf("GYROSCOPE : %.3f, %.3f, %.3f\n", vg.x, vg.y, vg.z);        
+        printf("MAGNETOMETRE : %.3f, %.3f, %.3f\n", vm.x, vm.y, vm.z);
+
+        // MadgwickAHRSupdate(DEG2RAD(vg.x), DEG2RAD(vg.y), DEG2RAD(vg.z), va.x, va.y, va.z, vm.x, vm.y, vm.z);
+        // MadgwickGetEulerAnglesDegrees(&heading, &pitch, &roll);
+        // printf("heading: %2.3f°, pitch: %2.3f°, roll: %2.3f°\n", heading, pitch, roll);
+
         printf("------------------------------------------\n");
-        vTaskDelay(50);
+        vTaskDelay(100);
     }
 
-    /* Demonstrate writing by reseting the MPU9250 */
-    ESP_ERROR_CHECK(mpu9250_register_write_byte(MPU9250_PWR_MGMT_1_REG_ADDR, 1 << MPU9250_RESET_BIT));
 
-    ESP_ERROR_CHECK(i2c_driver_delete(I2C_MASTER_NUM));
-    ESP_LOGI(TAG, "I2C unitialized successfully");
+    // printf("%.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f \n", va.x, va.y, va.z, vg.x, vg.y, vg.z, vm.x, vm.y, vm.z);
+
+    // mpu9250_register_write_byte(MPU9250_GYRO_CONFIG, 24); // 0 8 16 24
+    // mpu9250_register_write_byte(MPU9250_ACCEL_CONFIG, 24); // 0 8 16 24
+
+    // mpu9250_register_read(MPU9250_GYRO_CONFIG, data_read, 1);
+    // printf("MPU9250_GYRO_CONFIG : 0x%04Xh\n", data_read[0]);
+    
+    // mpu9250_register_read(MPU9250_ACCEL_CONFIG, data_read, 1);
+    // printf("MPU9250_ACCEL_CONFIG : 0x%04Xh\n", data_read[0]);
+
+    // printf("Gyroscope : %f LSB/(°/s)\n", gyroscope_scale());
+    // printf("Accelerometer : %f LSB/g\n", accelerometer_scale());
+
+    /* Demonstrate writing by reseting the MPU9250 */
+    // ESP_ERROR_CHECK(mpu9250_register_write_byte(MPU9250_PWR_MGMT_1_REG_ADDR, 1 << MPU9250_RESET_BIT));
+
+    // ESP_ERROR_CHECK(i2c_driver_delete(I2C_MASTER_NUM));
+    // ESP_LOGI(TAG, "I2C unitialized successfully");
+    ESP_LOGI(TAG, "--- Fin du programme ---");
+}
+
+
+
+float gyroscope_scale()
+{
+    float gyro_LSB;
+    mpu9250_register_read(MPU9250_GYRO_CONFIG, data_read, 1);
+    int FS_SEL=data_read[0];
+    if (FS_SEL==0)
+    {
+        return gyro_LSB=131;
+    }
+    else if (FS_SEL==8)
+    {
+        return gyro_LSB=65.5;
+    }
+    else if (FS_SEL==16)
+    {
+        return gyro_LSB=32.8;
+    }
+    else if (FS_SEL==24)
+    {
+        return gyro_LSB=16.4;
+    }
+    else
+    {
+        return EXIT_FAILURE;
+    }
+}
+
+float accelerometer_scale()
+{
+    float accel_LSB;
+    mpu9250_register_read(MPU9250_ACCEL_CONFIG, data_read, 1);
+    int AFS_SEL=data_read[0];
+    if (AFS_SEL==0)
+    {    
+        return accel_LSB=16384;
+    }
+    else if (AFS_SEL==8)
+    {
+        return accel_LSB=8192;
+    }
+    else if (AFS_SEL==16)
+    {
+        return accel_LSB=4096;
+    }
+    else if (AFS_SEL==24)
+    {
+        return accel_LSB=2048;
+    }
+    else
+    {
+        return EXIT_FAILURE;
+    }
 }
