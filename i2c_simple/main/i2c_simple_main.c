@@ -39,7 +39,12 @@
 
 #define AK8963_CNTL1                0x0A        // Power down (0000), single-measurement (0001), self-test (1000) and Fuse ROM (1111) modes on bits 3:0
 #define AK8963_ASTC                 0x0C        // Self test control
-#define AK8963_INFO                 0x01
+#define AK8963_INFO                 0x01        
+#define AK8963_ASAX                 0x10        // Magnetic sensor X-axis sensitivity adjustment value
+#define AK8963_ASAY                 0x11        // Magnetic sensor Y-axis sensitivity adjustment value
+#define AK8963_ASAZ                 0x12        // Magnetic sensor Z-axis sensitivity adjustment value
+#define AK8963_STATUS_1             0x02
+#define AK8963_STATUS_2             0x09
 
 #define MPU9250_INT_ENABLE          0x38
 #define DEG2RAD(deg)                (deg * M_PI / 180.0f)
@@ -173,7 +178,15 @@ vector_t magnetometer(void)
 {
     data_write[0] = AK8963_WHO_AM_I;
     i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
-    printf("WHO_AM_I (should return 0x48) = 0x%04X\n", data_read[0]);
+    if (data_read[0 != 0x48])
+    {
+        perror("WHO_AM_I Magnetometer");
+    }
+    else
+    {
+        printf("WHO_AM_I (should return 0x48) = 0x%04X\n", data_read[0]);  
+    }
+
 
     data_write[0] = AK8963_XOUT_L;
     i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 6, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -190,6 +203,11 @@ vector_t magnetometer(void)
     vm.x = mx;
     vm.y = my;
     vm.z = mz;
+    
+    data_write[0] = AK8963_STATUS_2;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_STATUS_2: %d\n\n", data_read[0]);
+    
     return vm;
 }
 
@@ -450,15 +468,6 @@ void MadgwickGetEulerAnglesDegrees(float *heading, float *pitch, float *roll)
     *roll *= RAD_2_DEG;
 }
 
-
-// char buffer_az[500];
-// char buffer_gx[500];
-// char buffer_gy[500];
-// char buffer_gz[500];
-// char buffer_mx[500];
-// char buffer_my[500];
-// char buffer_mz[500];
-
 char buffer_ax[30];
 char buffer_ay[30];
 int limit = 100;
@@ -578,10 +587,13 @@ void concatenation()
 {
     for (int i=0; i<40; i++)
     {
-        accelerometer();
-        tab_ax[i]=va.x;
-        tab_ay[i]=va.y;
-        tab_az[i]=va.z;
+        // accelerometer();
+        // tab_ax[i]=va.x;
+        // tab_ay[i]=va.y;
+        // tab_az[i]=va.z;
+        tab_ax[i]=i;
+        tab_ay[i]=i;
+        tab_az[i]=i;
         vTaskDelay(pdMS_TO_TICKS(10)); // fréquence d'acquisition de 10 ms soit 100 Hz
     }
 
@@ -593,6 +605,79 @@ void concatenation()
     printf("Longueur du buffer : %d\n", strlen(buffer_to_send));
 }
 
+void startMagnetometer()
+{
+    mpu9250_register_write_byte(MPU9250_RA_USER_CTRL, 0 << 5);
+
+    data_write[0] = MPU9250_RA_USER_CTRL;
+    i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("MPU9250_RA_USER_CTRL (should return 0): 0x%04X\n", data_read[0]);
+
+
+    mpu9250_register_write_byte(MPU9250_INT_PIN_CFG, 1 << 1);
+
+    data_write[0] = MPU9250_INT_PIN_CFG;
+    i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("MPU9250_INT_PIN_CFG (should return 2): 0x%04X\n", data_read[0]);
+
+    // Setup the Magnetomete to fuse ROM accesse mode to get the Sensitivity Adjustment
+    uint8_t write_buf_2[8] = {AK8963_CNTL1, 1 << 0 | 1 << 1 | 1 << 2 | 1 << 3 | 1 << 4}; // 0001 1111 : Fuse ROM access mode
+    i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf_2, sizeof(write_buf_2), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+
+    data_write[0] = AK8963_CNTL1;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_CNTL1 (should return 1F): 0x%04X\n\n", data_read[0]);
+
+    // Wait for the mode changes
+    vTaskDelay(100/portTICK_PERIOD_MS); 
+
+    // Read the Sensitivity Adjustement values and calculations
+    data_write[0] = AK8963_ASAX;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_ASAX : 0x%04X\n", data_read[0]);
+    printf("AK8963_ASAX décimal : 0x%d\n\n", data_read[0]);
+    float asax = (data_read[0]-128)*0.5/128+1;
+
+    data_write[0] = AK8963_ASAY;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_ASAY : 0x%08X\n", data_read[0]);
+    printf("AK8963_ASAY décimal : 0x%d\n\n", data_read[0]);
+    float asay = (data_read[0]-128)*0.5/128+1;
+
+    data_write[0] = AK8963_ASAZ;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_ASAZ : 0x%08X\n", data_read[0]);
+    printf("AK8963_ASAZ décimal : 0x%d\n\n", data_read[0]);
+    float asaz = (data_read[0]-128)*0.5/128+1;
+
+    printf("asax = %.3f\nasay = %.3f\nasaz = %.3f\n", asax, asay, asaz);
+
+    // Reset the magnetometer to power down mode
+    uint8_t write_buf_3[8] = {AK8963_CNTL1, 0 << 0 | 0 << 1 | 0 << 2 | 0 << 3 | 0 << 4};
+    i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf_3, sizeof(write_buf_3), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+
+    data_write[0] = AK8963_CNTL1;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_CNTL1 power off (should return 0): 0x%04X\n\n", data_read[0]);
+
+    //  Wait for the mode changes
+    vTaskDelay(100/portTICK_PERIOD_MS);
+
+    // Set the magnetometer to continuous mode 2 (100Hz) and 16-bit output
+    uint8_t write_buf_4[8] = {AK8963_CNTL1, 1 << 1 | 1 << 2 | 1 << 4}; // 0001 1111 : Fuse ROM access mode
+    i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf_4, sizeof(write_buf_4), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+
+    data_write[0] = AK8963_CNTL1;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_CNTL1 continuous mode 2 (should return 16): 0x%04X\n\n", data_read[0]);
+
+    //  Wait for the mode changes
+    vTaskDelay(100/portTICK_PERIOD_MS);
+
+    data_write[0] = AK8963_STATUS_1;
+    i2c_master_write_read_device(I2C_MASTER_NUM, AK8963_ADDRESS, data_write, 1, data_read, 1, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
+    printf("AK8963_STATUS_1 (1 : ready | 0 : not ready): %d\n\n", data_read[0]);
+}
 
 void app_main(void)
 {
@@ -600,15 +685,11 @@ void app_main(void)
     ESP_ERROR_CHECK(i2c_master_init());
     ESP_LOGI(TAG, "I2C initialized successfully");
 
-    mpu9250_register_write_byte(MPU9250_INT_PIN_CFG, 1 << 1); // Ecriture dans le registre pour activer le mode pass-through
+    startMagnetometer();
 
-    uint8_t write_buf[8] = {AK8963_CNTL1, 1 << 1 | 1 << 2 }; // 0110 : continuous measurement mode 2 1111 : Fuse ROM access mode
-    i2c_master_write_to_device(I2C_MASTER_NUM, AK8963_ADDRESS, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);    
-    
-    ble();
+    // ble();
     // createQueues();
-
-    concatenation();
+    // concatenation();
 
 
     // float acc_x = 15.526, acc_y = 16.364;
@@ -621,8 +702,8 @@ void app_main(void)
 
 
     /* Acquisitions */
-    bool state = false;
-    // for (int i=0; i<limit; i++)
+    bool state = true;
+    // for (int i=0; i<1; i++)
     while(state)
     {
         accelerometer(); //return vector_t va.x, va.y, va.z
