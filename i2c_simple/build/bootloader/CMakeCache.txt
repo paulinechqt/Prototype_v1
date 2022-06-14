@@ -248,7 +248,7 @@ LEGACY_INCLUDE_COMMON_HEADERS:UNINITIALIZED=
 PROJECT_SOURCE_DIR:UNINITIALIZED=C:/Users/pauli/esp/esp-idf/Prototype/Prototype_v1/i2c_simple
 
 //No help, variable specified on the command line.
-PYTHON:UNINITIALIZED=d:/esp/python_env/idf4.4_py3.8_env/Scripts/python.exe
+PYTHON:UNINITIALIZED=D:/esp/python_env/idf4.4_py3.8_env/Scripts/python.exe
 
 //No help, variable specified on the command line.
 PYTHON_DEPS_CHECKED:UNINITIALIZED=1
