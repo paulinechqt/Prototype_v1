@@ -5,7 +5,7 @@
 #include "driver/i2c.h"
 #include "ble.h"
 #include <math.h>
-#include<time.h>
+#include <time.h>
 #include"freertos/FreeRTOS.h"
 #include"freertos/task.h"
 #include "freertos/queue.h"
@@ -54,12 +54,10 @@ const char *TAG = "Prototype";
 
 QueueHandle_t queue_ax, queue_ay, queue_az, queue_gx, queue_gy, queue_gz, queue_mx, queue_my, queue_mz;
 
-float ax, ay, az, gx, gy, gz, mx, my, mz;
-float heading, pitch, roll;
 uint8_t data_write[20];
 uint8_t data_read[20];
 
-char prof_shared_buf[20] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'j', 'k'};
+char prof_shared_buf[22];
 
 typedef struct
 {
@@ -280,37 +278,11 @@ vector_t magnetometer(void)
     return vm;
 }
 
+int taille = 10; // Longueur de la queue
 
-
-char buffer_to_send[30] = {'E','X','E','M','P','L','E'};
-
-char buffer_ax[30];
-char buffer_ay[30];
-float tab;
-
-void format(float val, char buffer_to_send[30])
+void createQueues(int taille) // Création des 9 neufs queues
 {
-    sprintf(buffer_to_send, "%f", val);
-    printf("%s\n", buffer_to_send);
-}
-
-void ble_send_value(QueueHandle_t queue, char buffer[30])
-{
-    float val;
-    if (pdTRUE == xQueueReceive(queue, (void *)(&val), pdMS_TO_TICKS(1000))) // Récupération de la valeur au bout de la queue
-    {
-        printf("Valeur reçue : %f\n", val);
-        printf("----------------------\n\n");
-        
-        // float to string
-        sprintf(buffer_to_send, "%f", val);
-        printf("%s\n", buffer_to_send);
-    }
-}
-
-int taille = 100;
-void createQueues()
-{
+    taille = taille*2+1;
     queue_ax = xQueueCreate(taille, sizeof(float));
     queue_ay = xQueueCreate(taille, sizeof(float));
     queue_az = xQueueCreate(taille, sizeof(float));
@@ -322,7 +294,7 @@ void createQueues()
     queue_mz = xQueueCreate(taille, sizeof(float));
 }
 
-void storeValues(vector_t va, vector_t vg, vector_t vm)
+void storeValues(vector_t va, vector_t vg, vector_t vm) // Envoie des valeurs acquises dans chaque queue
 {
     xQueueSend(queue_ax, (void*)(&va.x), pdMS_TO_TICKS(10000));
     xQueueSend(queue_ay, (void*)(&va.y), pdMS_TO_TICKS(10000));
@@ -335,50 +307,155 @@ void storeValues(vector_t va, vector_t vg, vector_t vm)
     xQueueSend(queue_mz, (void*)(&vm.z), pdMS_TO_TICKS(10000));
 }
 
-void sendValues(QueueHandle_t queue_ax, QueueHandle_t queue_ay, QueueHandle_t queue_az, QueueHandle_t queue_gx, QueueHandle_t queue_gy, QueueHandle_t queue_gz, QueueHandle_t queue_mx, QueueHandle_t queue_my, QueueHandle_t queue_mz)
+void bin(int val)
 {
-    // Récupérer le flottant
-    // Le convertir en une chaîne de caractère
-    // L'écrire dans la caractèristique
+    printf("%d en binaire : ", val);
+    for (int i=31; i>=0; i--)
+    {
+        printf("%d", (val >> i ) & 1);
+    }
 }
 
+// Récupération des valeurs dans les queues, décomposition en 2 octets et écriture dans prof_shared_buf
+void sendValues(QueueHandle_t queue_ax, QueueHandle_t queue_ay, QueueHandle_t queue_az, QueueHandle_t queue_gx, QueueHandle_t queue_gy, QueueHandle_t queue_gz, QueueHandle_t queue_mx, QueueHandle_t queue_my, QueueHandle_t queue_mz)
+{
+    float ax_float, ay_float, az_float, gx_float, gy_float, gz_float, mx_float, my_float, mz_float;
+    short ax, ay, az, gx, gy, gz, mx, my, mz;
+
+    // --- Récupération des mesures à la sortie des queues ---
+    xQueueReceive(queue_ax, (void*)(&ax_float), pdMS_TO_TICKS(10000));
+    xQueueReceive(queue_ay, (void*)(&ay_float), pdMS_TO_TICKS(10000));
+    xQueueReceive(queue_az, (void*)(&az_float), pdMS_TO_TICKS(10000));
+    xQueueReceive(queue_gx, (void*)(&gx_float), pdMS_TO_TICKS(10000));
+    xQueueReceive(queue_gy, (void*)(&gy_float), pdMS_TO_TICKS(10000));
+    xQueueReceive(queue_gz, (void*)(&gz_float), pdMS_TO_TICKS(10000));
+    xQueueReceive(queue_gx, (void*)(&mx_float), pdMS_TO_TICKS(10000));
+    xQueueReceive(queue_gy, (void*)(&my_float), pdMS_TO_TICKS(10000));
+    xQueueReceive(queue_gz, (void*)(&mz_float), pdMS_TO_TICKS(10000));
+
+    // --- Affichage des flottants ---
+    printf("ax_float = %.3f\n", ax_float);
+    printf("ay_float = %.3f\n", ay_float);
+    printf("az_float = %.3f\n", az_float);
+    printf("gx_float = %.3f\n", gx_float);
+    printf("gy_float = %.3f\n", gy_float);
+    printf("gz_float = %.3f\n", gz_float);
+    printf("mx_float = %.3f\n", mx_float);
+    printf("my_float = %.3f\n", my_float);
+    printf("mz_float = %.3f\n\n", mz_float);
+
+    // --- Multiplication par 1000 pour avoir des entiers ---
+    ax=ax_float*1000;
+    ay=ay_float*1000;
+    az=az_float*1000;
+    gx=gx_float*1000;
+    gy=gy_float*1000;
+    gz=gz_float*1000;
+    mx=mx_float*1000;
+    my=my_float*1000;
+    mz=mz_float*1000;
+
+    // --- Affichage des entiers ---
+    // printf("ax = %d\n", ax);
+    // printf("ay = %d\n", ay);
+    // printf("az = %d\n", az);
+    // printf("gx = %d\n", gx);
+    // printf("gy = %d\n", gy);
+    // printf("gz = %d\n", gz);
+    // printf("mx = %d\n", mx);
+    // printf("my = %d\n", my);
+    // printf("mz = %d\n\n", mz);
+    
+    // --- Ecriture des entiers sur 2 octets chacun dans le buffer de la caractéristique--
+    prof_shared_buf[0] = ax>>0;
+    prof_shared_buf[1] = ax>>8;
+    prof_shared_buf[2] = ay>>0;
+    prof_shared_buf[3] = ay>>8;
+    prof_shared_buf[4] = az>>0;
+    prof_shared_buf[5] = az>>8;
+    prof_shared_buf[6] = gx>>0;
+    prof_shared_buf[7] = gx>>8;
+    prof_shared_buf[8] = gy>>0;
+    prof_shared_buf[9] = gy>>8;
+    prof_shared_buf[10] = gz>>0;
+    prof_shared_buf[11] = gz>>8;
+    prof_shared_buf[12] = mx>>0;
+    prof_shared_buf[13] = mx>>8;
+    prof_shared_buf[14] = my>>0;
+    prof_shared_buf[15] = my>>8;
+    prof_shared_buf[16] = mz>>0;
+    prof_shared_buf[17] = mz>>8;
+
+    // --- Affichage des 2 octets pour chaque entier ---
+    printf("ax = %.2x %.2x\n", prof_shared_buf[0], prof_shared_buf[1]);
+    printf("ay = %.2x %.2x\n", prof_shared_buf[2], prof_shared_buf[3]);
+    printf("az = %.2x %.2x\n", prof_shared_buf[4], prof_shared_buf[5]);
+    printf("gx = %.2x %.2x\n", prof_shared_buf[6], prof_shared_buf[7]);
+    printf("gy = %.2x %.2x\n", prof_shared_buf[8], prof_shared_buf[9]);
+    printf("gz = %.2x %.2x\n", prof_shared_buf[10], prof_shared_buf[11]);
+    printf("mx = %.2x %.2x\n", prof_shared_buf[12], prof_shared_buf[13]);
+    printf("my = %.2x %.2x\n", prof_shared_buf[14], prof_shared_buf[15]);
+    printf("mz = %.2x %.2x\n\n", prof_shared_buf[16], prof_shared_buf[17]);
+
+    
+    // --- Affichage des nombres binaires pour chaque mesures ---
+    bin(ax);
+    bin(ay);
+    bin(az);
+    bin(gx);
+    bin(gy);
+    bin(gz);
+    bin(mx);
+    bin(my);
+    bin(mz);
+}
 
 void app_main(void)
 {
-    
+    int taille = 10;
     ESP_ERROR_CHECK(i2c_master_init());
     ESP_LOGI(TAG, "I2C initialized successfully");
 
     startMagnetometer();
 
-    // Lancement du BLE
-    ble();
-
     // Création des queues
-    createQueues();
+    createQueues(taille);
 
     /* Acquisitions */
-    bool state = true;
-    while(state)
+    // bool state = true;
+    // while(state)
+    
+    for (int i=0; i<taille; i++)
     {
+        printf("i = %d\n",i);
         accelerometer(); //return vector_t va.x, va.y, va.z
         gyroscope(); //return vector_t vg.x, vg.y, vg.z
-        magnetometer(); //return vector_t vm.x, vm.y, vm.z
-
-        storeValues(va, vg, vm); // "Stockage" des données dans les queues
-        sendValues(queue_ax, queue_ay, queue_az, queue_gx, queue_gy, queue_gz, queue_mx, queue_my, queue_mz);
+        magnetometer(); //return vector_t vm.x, vm.y, vm
 
         printf("  ACCELEROMETRE [g]: %.3f, %.3f, %.3f\n", va.x, va.y, va.z);
         printf("  GYROMETRE [°/s]: %.3f, %.3f, %.3f\n", vg.x, vg.y, vg.z);        
         printf("  MAGNETOMETRE [µT]: %.3f, %.3f, %.3f\n", vm.x, vm.y, vm.z);
 
+        storeValues(va, vg, vm); // "Stockage" des données dans les queues
+
         printf("------------------------------------------\n");
 
-        vTaskDelay(50/portTICK_PERIOD_MS); // Acquisition toutes les 50 ms
+        vTaskDelay(100/portTICK_PERIOD_MS); // Acquisition toutes les 100 ms
+    }
+    
+    // Lancement du BLE
+    ble();
+    vTaskDelay(200);
+    ESP_LOGI(TAG, "--- Lancer la réception sur la Raspberry Pi 3 ---");
+    vTaskDelay(2000);
+
+    for (int i=0; i<taille; i++)
+    {
+        sendValues(queue_ax, queue_ay, queue_az, queue_gx, queue_gy, queue_gz, queue_mx, queue_my, queue_mz);
+        vTaskDelay(30);
     }
     ESP_LOGI(TAG, "--- Fin du programme ---");
 }
-
 
 
 float gyroscope_scale()
