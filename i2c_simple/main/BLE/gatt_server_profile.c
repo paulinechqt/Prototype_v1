@@ -32,6 +32,7 @@
 uint8_t char1_str[] = {0x11,0x22,0x33};
 uint8_t char2_str_ay[] = {0x44,0x55,0x66};
 
+
 esp_attr_value_t gatts_demo_char1_val =
 {
 	.attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX,
@@ -168,7 +169,6 @@ void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts
     	esp_gatt_rsp_t rsp;
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
 
-        // Here we fill the rsp (response) structure with our data (i.e. the temperature value).
         rsp.attr_value.handle = param->read.handle;
         rsp.attr_value.len = 21;
         for (int i=0; i<22; i++)
